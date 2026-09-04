@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Каталог</title>
+  <base target="_top">
+  <!-- Официальный SDK Telegram — даёт доступ к теме, кнопкам, initData и т.д. -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    /* Используем переменные темы Telegram, чтобы приложение выглядело "родным" в тёмной/светлой теме */
+    body {
+      margin: 0;
+      font-family: -apple-system, sans-serif;
+      background: var(--tg-theme-bg-color, #fff);
+      color: var(--tg-theme-text-color, #000);
+    }
+    .screen { display: none; padding: 12px; padding-bottom: 80px; }
+    .screen.active { display: block; }
+
+    .search-input {
+      width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px;
+      border: 1px solid #ccc; margin-bottom: 12px; font-size: 15px;
+    }
+    .categories { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px; }
+    .category-chip {
+      flex: 0 0 auto; padding: 8px 14px; border-radius: 20px;
+      background: var(--tg-theme-secondary-bg-color, #eee); white-space: nowrap; cursor: pointer;
+    }
+    .category-chip.active { background: var(--tg-theme-button-color, #2ea6ff); color: #fff; }
+
+    .product-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .product-card {
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5); border-radius: 12px;
+      overflow: hidden; cursor: pointer;
+    }
+    .product-card img { width: 100%; height: 120px; object-fit: cover; display: block; }
+    .product-card .info { padding: 8px; }
+    .product-card .name { font-size: 14px; font-weight: 600; }
+
+    .gallery { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
+    .gallery img { width: 100%; max-height: 240px; border-radius: 12px; object-fit: cover; }
+
+    .option-group { margin-bottom: 12px; }
+    .option-group .label { font-size: 13px; color: #888; margin-bottom: 6px; }
+    .option-btn {
+      display: inline-block; padding: 6px 12px; margin: 0 6px 6px 0; border-radius: 8px;
+      border: 1px solid #ccc; cursor: pointer;
+    }
+    .option-btn.selected { background: var(--tg-theme-button-color, #2ea6ff); color: #fff; border-color: transparent; }
+
+    .qty-row { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+    .qty-btn {
+      width: 36px; height: 36px; border-radius: 8px; border: 1px solid #ccc;
+      font-size: 18px; background: none; cursor: pointer;
+    }
+
+    .price-line { font-size: 22px; font-weight: 700; margin: 10px 0; }
+    .price-tiers { font-size: 13px; color: #888; margin-bottom: 12px; }
+
+    .btn-primary {
+      display: block; width: 100%; padding: 14px; border: none; border-radius: 12px;
+      background: var(--tg-theme-button-color, #2ea6ff); color: var(--tg-theme-button-text-color, #fff);
+      font-size: 16px; font-weight: 600; cursor: pointer;
+    }
+    .btn-secondary { background: none; color: var(--tg-theme-link-color, #2ea6ff); border: none; font-size: 15px; }
+
+    .cart-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+    .cart-fab {
+      position: fixed; bottom: 16px; left: 12px; right: 12px;
+      display: none;
+    }
+    .cart-fab.visible { display: block; }
+
+    textarea {
+      width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px;
+      border: 1px solid #ccc; font-family: inherit; font-size: 14px; min-height: 60px;
+    }
+    .back-btn { margin-bottom: 10px; color: var(--tg-theme-link-color, #2ea6ff); cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <!-- ЭКРАН 1: главная — поиск, категории, товары -->
+  <div id="screen-home" class="screen active">
+    <input class="search-input" id="search-input" placeholder="Поиск товара">
+    <div class="categories" id="categories"></div>
+    <div class="product-grid" id="product-grid"></div>
+  </div>
+
+  <!-- ЭКРАН 2: карточка товара -->
+  <div id="screen-product" class="screen">
+    <div class="back-btn" onclick="showScreen('home')">← Назад</div>
+    <div class="gallery" id="product-gallery"></div>
+    <h2 id="product-name"></h2>
+    <p id="product-description"></p>
+    <div id="product-price-tiers" class="price-tiers"></div>
+    <div id="product-options"></div>
+    <div class="qty-row">
+      <button class="qty-btn" onclick="changeQty(-1)">−</button>
+      <span id="qty-value">1</span>
+      <button class="qty-btn" onclick="changeQty(1)">+</button>
+    </div>
+    <div class="price-line" id="product-total-price"></div>
+    <button class="btn-primary" onclick="addToRequestList()">Добавить к заявке</button>
+  </div>
+
+  <!-- ЭКРАН 3: список к заявке -->
+  <div id="screen-cart" class="screen">
+    <div class="back-btn" onclick="showScreen('home')">← Продолжить выбор</div>
+    <h2>Ваша заявка</h2>
+    <div id="cart-items"></div>
+    <p><b id="cart-total"></b></p>
+    <textarea id="cart-comment" placeholder="Комментарий (необязательно)"></textarea>
+    <br><br>
+    <button class="btn-primary" id="submit-btn" onclick="submitRequest()">Отправить заявку</button>
+  </div>
+
+  <!-- ЭКРАН 4: подтверждение -->
+  <div id="screen-done" class="screen">
+    <h2>✅ Заявка отправлена</h2>
+    <p>Менеджер свяжется с вами в Telegram для уточнения деталей.</p>
+    <button class="btn-primary" onclick="resetAndGoHome()">Вернуться в каталог</button>
+  </div>
+
+  <!-- Плавающая кнопка "К заявке (N)" — видна, когда в списке есть хотя бы один товар -->
+  <button class="btn-primary cart-fab" id="cart-fab" onclick="showScreen('cart')"></button>
+
+  <script>
+    // ============================================================
+    // ВАЖНО: это адрес твоего Apps Script API (тот самый /exec из Settings.web_app_url).
+    // Страница теперь статическая (лежит на GitHub Pages), а API как было на Apps Script,
+    // так и осталось — просто адрес теперь прописан здесь явно, а не подставляется сервером.
+    // ============================================================
+    const BASE_URL = 'ВСТАВЬ_СЮДА_СВОЙ_EXEC_АДРЕС';
+
+    // ---------- Инициализация Telegram Mini App ----------
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand(); // разворачиваем на весь экран, а не маленькое окно снизу
+
+    // ---------- Получение initData от Telegram ----------
+    // На GitHub Pages страница отдаётся как самый обычный статический файл — никакого
+    // вложенного iframe от Google тут нет (в отличие от Apps Script HtmlService),
+    // поэтому обычный window.location.hash работает штатно, без обходных путей.
+    function getTelegramInitData() {
+      // Обычно tg.initData уже готов к использованию сразу после tg.ready() —
+      // SDK сам разбирает location.hash. Оставляем небольшой резервный путь на случай,
+      // если по какой-то причине SDK его не считал, а хэш в адресе всё же есть.
+      if (tg.initData) return tg.initData;
+
+      const hash = window.location.hash || '';
+      const match = hash.match(/tgWebAppData=([^&]*)/);
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    // ---------- Состояние приложения (только в памяти текущей сессии, без сохранения между открытиями) ----------
+    let allProducts = [];
+    let allCategories = [];
+    let activeCategory = null;
+    let currentProduct = null;    // товар, открытый в карточке сейчас
+    let currentOptions = {};      // выбранные варианты текущего товара {Размер: "M", ...}
+    let currentQty = 1;
+    let requestList = [];         // список товаров, добавленных к заявке (мультивыбор, не постоянная корзина)
+
+    function apiGet(action, params) {
+      let url = BASE_URL + '?action=' + action;
+      if (params) {
+        Object.keys(params).forEach(function (k) { url += '&' + k + '=' + encodeURIComponent(params[k]); });
+      }
+      return fetch(url).then(function (r) { return r.json(); });
+    }
+
+    Promise.all([apiGet('categories'), apiGet('products')]).then(function (results) {
+      allCategories = results[0].data;
+      allProducts = results[1].data;
+      renderCategories();
+      renderProducts(allProducts);
+    }).catch(function (err) {
+      // Если каталог не загрузился — показываем причину прямо на экране,
+      // а не оставляем пустую страницу без единой подсказки, что пошло не так
+      document.getElementById('product-grid').innerHTML =
+        '<div style="grid-column: 1 / -1; color: red; font-size: 13px;">Ошибка загрузки каталога: ' + err.message + '</div>';
+    });
+
+    document.getElementById('search-input').addEventListener('input', function (e) {
+      const q = e.target.value.toLowerCase();
+      // Поиск делаем на клиенте по уже загруженному каталогу — без лишних запросов к серверу
+      const filtered = allProducts.filter(function (p) { return p.name.toLowerCase().indexOf(q) !== -1; });
+      renderProducts(filtered);
+    });
+
+    function renderCategories() {
+      const container = document.getElementById('categories');
+      container.innerHTML = '';
+      allCategories.forEach(function (cat) {
+        const chip = document.createElement('div');
+        chip.className = 'category-chip' + (activeCategory === cat.category_id ? ' active' : '');
+        chip.textContent = cat.name;
+        chip.onclick = function () {
+          activeCategory = (activeCategory === cat.category_id) ? null : cat.category_id;
+          renderCategories();
+          const filtered = activeCategory
+            ? allProducts.filter(function (p) { return p.category_id === activeCategory; })
+            : allProducts;
+          renderProducts(filtered);
+        };
+        container.appendChild(chip);
+      });
+    }
+
+    function renderProducts(products) {
+      const grid = document.getElementById('product-grid');
+      grid.innerHTML = '';
+      products.forEach(function (p) {
+        const card = document.createElement('div');
+        card.className = 'product-card';
+        card.onclick = function () { openProduct(p); };
+        card.innerHTML =
+          '<img src="' + (p.images[0] || '') + '">' +
+          '<div class="info"><div class="name">' + p.name + '</div></div>';
+        grid.appendChild(card);
+      });
+    }
+
+    // ---------- Карточка товара ----------
+    function openProduct(product) {
+      currentProduct = product;
+      currentOptions = {};
+      currentQty = 1;
+
+      document.getElementById('product-name').textContent = product.name;
+      document.getElementById('product-description').textContent = product.description || '';
+
+      const gallery = document.getElementById('product-gallery');
+      gallery.innerHTML = product.images.map(function (src) { return '<img src="' + src + '">'; }).join('');
+
+      Promise.all([
+        apiGet('prices', { product_id: product.product_id }),
+        apiGet('options', { product_id: product.product_id })
+      ]).then(function (results) {
+        currentProduct.prices = results[0].data;
+        currentProduct.optionGroups = results[1].data;
+        renderOptionGroups();
+        renderPriceTiers();
+        updatePriceDisplay();
+      });
+
+      showScreen('product');
+    }
+
+    function renderOptionGroups() {
+      const container = document.getElementById('product-options');
+      container.innerHTML = '';
+      const groups = currentProduct.optionGroups;
+
+      Object.keys(groups).forEach(function (optionName) {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'option-group';
+        groupDiv.innerHTML = '<div class="label">' + optionName + '</div>';
+
+        groups[optionName].forEach(function (value) {
+          const btn = document.createElement('span');
+          btn.className = 'option-btn' + (currentOptions[optionName] === value ? ' selected' : '');
+          btn.textContent = value;
+          btn.onclick = function () {
+            currentOptions[optionName] = value;
+            renderOptionGroups();
+          };
+          groupDiv.appendChild(btn);
+        });
+        container.appendChild(groupDiv);
+      });
+    }
+
+    function renderPriceTiers() {
+      const el = document.getElementById('product-price-tiers');
+      const prices = currentProduct.prices;
+      if (!prices || prices.length === 0) {
+        el.textContent = 'Цена по запросу — уточним после заявки';
+        return;
+      }
+      el.textContent = prices.map(function (p) {
+        return 'от ' + p.min_qty + ' шт. — ' + p.price + ' / шт.';
+      }).join('  •  ');
+    }
+
+    function changeQty(delta) {
+      currentQty = Math.max(1, currentQty + delta);
+      document.getElementById('qty-value').textContent = currentQty;
+      updatePriceDisplay();
+    }
+
+    function updatePriceDisplay() {
+      const prices = currentProduct.prices;
+      const priceEl = document.getElementById('product-total-price');
+      if (!prices || prices.length === 0) {
+        priceEl.textContent = 'Цена по запросу';
+        return;
+      }
+      const range = prices.filter(function (p) { return currentQty >= p.min_qty && currentQty <= p.max_qty; })[0]
+        || prices[prices.length - 1];
+      priceEl.textContent = (range.price * currentQty) + ' (' + range.price + ' / шт.)';
+    }
+
+    // ---------- Список к заявке (мультивыбор, не постоянная корзина) ----------
+    function addToRequestList() {
+      requestList.push({
+        product_id: currentProduct.product_id,
+        product_name: currentProduct.name,
+        options: Object.assign({}, currentOptions),
+        quantity: currentQty
+      });
+      updateCartFab();
+      showScreen('home');
+    }
+
+    function updateCartFab() {
+      const fab = document.getElementById('cart-fab');
+      if (requestList.length === 0) {
+        fab.classList.remove('visible');
+        return;
+      }
+      fab.classList.add('visible');
+      fab.textContent = 'К заявке (' + requestList.length + ')';
+    }
+
+    function renderCartScreen() {
+      const container = document.getElementById('cart-items');
+      container.innerHTML = '';
+      requestList.forEach(function (item, index) {
+        const optionsText = Object.keys(item.options).map(function (k) { return k + ': ' + item.options[k]; }).join(', ');
+        const row = document.createElement('div');
+        row.className = 'cart-item';
+        row.innerHTML =
+          '<div><b>' + item.product_name + '</b><br><span style="font-size:13px;color:#888">' +
+          optionsText + (optionsText ? ', ' : '') + item.quantity + ' шт.</span></div>' +
+          '<span class="btn-secondary" onclick="removeFromCart(' + index + ')">Убрать</span>';
+        container.appendChild(row);
+      });
+      document.getElementById('cart-total').textContent = requestList.length + ' позиций в заявке';
+    }
+
+    function removeFromCart(index) {
+      requestList.splice(index, 1);
+      updateCartFab();
+      renderCartScreen();
+    }
+
+    // ---------- Отправка заявки ----------
+    // Намеренно через GET (apiGet), а не POST — Apps Script на редиректе теряет тело
+    // POST-запроса (см. комментарий в Router.gs). Финальную цену всё равно всегда
+    // пересчитывает сервер, поэтому передача через query-параметры безопасна.
+    function submitRequest() {
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true; // блокируем сразу, чтобы исключить повторную отправку при двойном клике
+      btn.textContent = 'Отправляем...';
+
+      apiGet('request', {
+        initData: getTelegramInitData(), // сервер сам проверит подпись и достанет из неё пользователя
+        items: JSON.stringify(requestList),
+        comment: document.getElementById('cart-comment').value
+      })
+        .then(function (res) {
+          if (res.success) {
+            showScreen('done');
+          } else {
+            alert('Ошибка: ' + res.error.message);
+            btn.disabled = false;
+            btn.textContent = 'Отправить заявку';
+          }
+        })
+        .catch(function () {
+          alert('Не удалось отправить заявку. Проверьте соединение и попробуйте снова.');
+          btn.disabled = false;
+          btn.textContent = 'Отправить заявку';
+        });
+    }
+
+    function resetAndGoHome() {
+      requestList = [];
+      updateCartFab();
+      showScreen('home');
+    }
+
+    // ---------- Переключение экранов ----------
+    function showScreen(name) {
+      document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('active'); });
+      document.getElementById('screen-' + name).classList.add('active');
+      if (name === 'cart') renderCartScreen();
+    }
+  </script>
+</body>
+</html>
